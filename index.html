@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grads.Fyi</title>
+  </head>
+  <body>
+    <br />
+    <br />
+    <br />
+    <div align="center">
+      <h1>Grads.Fyi</h1>
+      <p>Levels.fyi for higher education</p>
+
+      <form id="school-search" role="search" aria-label="Search schools">
+        <label for="q">Search schools</label><br />
+        <input
+          id="q"
+          name="q"
+          type="search"
+          placeholder="Search schools..."
+          size="40"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </form>
+
+      <p id="search-status" aria-live="polite"></p>
+    </div>
+
+    <script>
+      const form = document.getElementById("school-search");
+      const input = document.getElementById("q");
+      const status = document.getElementById("search-status");
+
+      function syncFromUrl() {
+        const url = new URL(window.location.href);
+        const q = url.searchParams.get("q") || "";
+        input.value = q;
+        status.textContent = q ? `Searching for: ${q}` : "";
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const q = input.value.trim();
+        const url = new URL(window.location.href);
+        if (q) url.searchParams.set("q", q);
+        else url.searchParams.delete("q");
+        window.history.replaceState({}, "", url);
+        syncFromUrl();
+      });
+
+      input.addEventListener("input", () => {
+        status.textContent = input.value.trim()
+          ? `Searching for: ${input.value.trim()}`
+          : "";
+      });
+
+      syncFromUrl();
+    </script>
+  </body>
+</html>
