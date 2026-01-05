@@ -1,0 +1,9 @@
+{
+  "schools": [
+    {
+      "id": "university-of-calgary",
+      "name": "University of Calgary",
+      "aliases": ["u of c", "uofc", "u calgary", "ucalgary"]
+    }
+  ]
+}

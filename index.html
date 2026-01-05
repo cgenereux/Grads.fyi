@@ -23,28 +23,194 @@
           size="40"
           autocomplete="off"
           spellcheck="false"
+          list="school-options"
         />
+        <datalist id="school-options"></datalist>
       </form>
-
-      <p id="search-status" aria-live="polite"></p>
     </div>
 
     <script>
       const form = document.getElementById("school-search");
       const input = document.getElementById("q");
-      const status = document.getElementById("search-status");
+      const datalist = document.getElementById("school-options");
+      const datalistId = datalist.id;
+      let suggestionsEnabled = true;
+
+      const fallbackSchools = [
+        {
+          id: "university-of-calgary",
+          name: "University of Calgary",
+          aliases: ["u of c", "uofc", "u calgary", "ucalgary"],
+        },
+      ];
+      let schools = fallbackSchools.slice();
+
+      async function loadSchools() {
+        try {
+          const response = await fetch("data/schools.json", { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          const list = Array.isArray(data) ? data : data?.schools;
+          if (Array.isArray(list) && list.length) schools = list;
+        } catch {
+          schools = fallbackSchools.slice();
+        }
+      }
+
+      function enableSuggestions() {
+        if (suggestionsEnabled) return;
+        input.setAttribute("list", datalistId);
+        suggestionsEnabled = true;
+      }
+
+      function disableSuggestions() {
+        datalist.replaceChildren();
+        input.removeAttribute("list");
+        suggestionsEnabled = false;
+      }
+
+      function normalize(text) {
+        return String(text)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim()
+          .replace(/\s+/g, " ");
+      }
+
+      function levenshteinDistance(a, b) {
+        if (a === b) return 0;
+        if (!a) return b.length;
+        if (!b) return a.length;
+
+        const prev = new Array(b.length + 1);
+        const curr = new Array(b.length + 1);
+        for (let j = 0; j <= b.length; j++) prev[j] = j;
+
+        for (let i = 1; i <= a.length; i++) {
+          curr[0] = i;
+          for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            curr[j] = Math.min(
+              prev[j] + 1,
+              curr[j - 1] + 1,
+              prev[j - 1] + cost
+            );
+          }
+          for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+        }
+
+        return prev[b.length];
+      }
+
+      function similarity(a, b) {
+        const an = normalize(a);
+        const bn = normalize(b);
+        if (!an || !bn) return 0;
+        if (bn.includes(an)) return 1;
+        const dist = levenshteinDistance(an, bn);
+        return 1 - dist / Math.max(an.length, bn.length);
+      }
+
+      function scoreSchool(query, school) {
+        const q = normalize(query);
+        if (!q) return 0;
+
+        const candidates = [school.name, ...(school.aliases || [])];
+        let best = 0;
+
+        for (const candidate of candidates) {
+          best = Math.max(best, similarity(q, candidate));
+
+          const candidateTokens = normalize(candidate).split(" ").filter(Boolean);
+          const queryTokens = q.split(" ").filter(Boolean);
+          if (candidateTokens.length && queryTokens.length) {
+            let sum = 0;
+            for (const qt of queryTokens) {
+              let tokenBest = 0;
+              for (const ct of candidateTokens) {
+                tokenBest = Math.max(tokenBest, similarity(qt, ct));
+              }
+              sum += tokenBest;
+            }
+            best = Math.max(best, sum / queryTokens.length);
+          }
+        }
+
+        return best;
+      }
+
+      function getMatches(query) {
+        const q = normalize(query);
+        if (!q) return [];
+
+        return schools
+          .map((school) => ({ school, score: scoreSchool(q, school) }))
+          .filter((x) => x.score >= 0.45)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 8);
+      }
+
+      function renderMatches(matches, query) {
+        datalist.replaceChildren();
+        const q = normalize(query || "");
+        for (const match of matches) {
+          const candidates = [match.school.name, ...(match.school.aliases || [])];
+          let bestValue = match.school.name;
+          let bestScore = -1;
+          if (q) {
+            for (const candidate of candidates) {
+              const s = similarity(q, candidate);
+              if (s > bestScore) {
+                bestScore = s;
+                bestValue = candidate;
+              }
+            }
+          }
+
+          const option = document.createElement("option");
+          option.value = bestValue;
+          if (bestValue !== match.school.name) option.label = match.school.name;
+          datalist.appendChild(option);
+        }
+      }
+
+      function selectSchool(school) {
+        input.value = school.name;
+        const url = new URL(window.location.href);
+        url.searchParams.set("school", school.id);
+        url.searchParams.delete("q");
+        window.history.replaceState({}, "", url);
+        disableSuggestions();
+      }
 
       function syncFromUrl() {
         const url = new URL(window.location.href);
+        const schoolId = url.searchParams.get("school") || "";
         const q = url.searchParams.get("q") || "";
-        input.value = q;
-        status.textContent = q ? `Searching for: ${q}` : "";
+        const selected = schoolId
+          ? schools.find((s) => s.id === schoolId)
+          : null;
+
+        input.value = selected ? selected.name : q;
+        if (selected) disableSuggestions();
+        else {
+          enableSuggestions();
+          renderMatches(getMatches(input.value), input.value);
+        }
       }
 
       form.addEventListener("submit", (event) => {
         event.preventDefault();
-        const q = input.value.trim();
+        const raw = input.value.trim();
+        const matches = getMatches(raw);
+        if (matches.length && matches[0].score >= 0.75) {
+          selectSchool(matches[0].school);
+          return;
+        }
+
+        const q = raw;
         const url = new URL(window.location.href);
+        url.searchParams.delete("school");
         if (q) url.searchParams.set("q", q);
         else url.searchParams.delete("q");
         window.history.replaceState({}, "", url);
@@ -52,12 +218,37 @@
       });
 
       input.addEventListener("input", () => {
-        status.textContent = input.value.trim()
-          ? `Searching for: ${input.value.trim()}`
-          : "";
+        const q = input.value.trim();
+        const matches = getMatches(q);
+        const exact = matches.find(
+          (m) => normalize(m.school.name) === normalize(q) && m.score >= 0.95
+        );
+        if (exact) {
+          selectSchool(exact.school);
+          return;
+        }
+
+        enableSuggestions();
+        renderMatches(matches, q);
       });
 
-      syncFromUrl();
+      input.addEventListener("click", () => {
+        if (suggestionsEnabled) return;
+        enableSuggestions();
+        const q = input.value.trim();
+        renderMatches(getMatches(q), q);
+      });
+
+      input.addEventListener("change", () => {
+        const raw = input.value.trim();
+        const matches = getMatches(raw);
+        if (matches.length && matches[0].score >= 0.9) selectSchool(matches[0].school);
+      });
+
+      (async () => {
+        await loadSchools();
+        syncFromUrl();
+      })();
     </script>
   </body>
 </html>
